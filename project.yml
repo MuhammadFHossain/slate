@@ -1,0 +1,62 @@
+name: Slate
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    from: 0.12.4
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+targets:
+  Slate:
+    type: application
+    platform: macOS
+    sources:
+      - path: Slate
+        excludes:
+          - "Info.plist"
+          - "Resources/Fonts/**"
+          - "slate icons/**"
+      - path: Slate/Resources/Fonts
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: Fonts
+    dependencies:
+      - package: FluidAudio
+        product: FluidAudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.slate.dictation
+        PRODUCT_NAME: Slate
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: Slate/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Stable signing identity so TCC grants (Accessibility, Microphone)
+        # survive rebuilds. Apple Development / Automatic, never ad-hoc: ad-hoc
+        # re-signing changes the CDHash every build and invalidates the grants.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: WX2PT9X785
+        # Hardened runtime is on; the audio-input entitlement is required or
+        # macOS silently blocks the microphone.
+        CODE_SIGN_ENTITLEMENTS: Slate/Slate.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+# Run WITHOUT the debugger attached: macOS 26 has a libxpc launch-init race that
+# aborts the process before main() under LLDB (an Apple system-library bug, not
+# ours). Launching via open / posix_spawn is reliable. Same workaround Blue uses.
+schemes:
+  Slate:
+    build:
+      targets:
+        Slate: all
+    run:
+      config: Debug
+      debugEnabled: false
