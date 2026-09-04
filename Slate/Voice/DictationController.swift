@@ -32,9 +32,10 @@ final class DictationController: ObservableObject {
     /// The transcript so far, formatted, paragraphs separated by blank lines.
     /// The last paragraph is the stretch still being spoken.
     @Published var liveText: String = ""
-    /// The notch's width on the screen the island is showing on (zero on
-    /// screens without one), so the island is never narrower than it.
-    @Published var islandMinWidth: CGFloat = 0
+    /// The notch on the screen the island is showing on, so the island can
+    /// grow out of it: its width (plus a little overlap so no sliver of menu
+    /// bar shows between them) and its height. Zero on screens without one.
+    @Published var notch = NotchMetrics()
 
     var isBusy: Bool { phase == .listening || phase == .transcribing }
 
@@ -284,11 +285,16 @@ final class DictationController: ObservableObject {
     // MARK: - Island window
 
     private func showIsland() {
-        islandMinWidth = FloatingPanel.notchWidth(on: NSScreen.main)
+        if let screen = NSScreen.main, let rect = FloatingPanel.notchRect(on: screen) {
+            notch = NotchMetrics(width: rect.width + 4, height: rect.height)
+        } else {
+            notch = NotchMetrics()
+        }
         if panel == nil {
             let content = DictationIslandView(onResize: { [weak self] size in
-                self?.lastIslandSize = size
-                self?.panel?.layoutTopCenter(contentSize: size)
+                guard let self else { return }
+                self.lastIslandSize = size
+                self.panel?.layoutTopCenter(contentSize: size, fromScreenTop: self.notch.isPresent)
             })
             .environmentObject(self)
             .environmentObject(SpeechStatus.shared)
@@ -300,7 +306,7 @@ final class DictationController: ObservableObject {
         }
         // Lay out from the last measured size; the island then grows itself
         // as words arrive.
-        panel?.layoutTopCenter(contentSize: lastIslandSize)
+        panel?.layoutTopCenter(contentSize: lastIslandSize, fromScreenTop: notch.isPresent)
         panel?.orderFrontRegardless()
     }
 
@@ -318,4 +324,11 @@ final class DictationController: ObservableObject {
             self.hideIsland()
         }
     }
+}
+
+/// The notch the island grows out of. Zero-sized on screens without one.
+struct NotchMetrics: Equatable {
+    var width: CGFloat = 0
+    var height: CGFloat = 0
+    var isPresent: Bool { height > 0 }
 }

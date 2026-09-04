@@ -46,24 +46,21 @@ final class FloatingPanel: NSPanel {
         )
     }
 
-    /// How wide the island's glass should be at minimum on this screen: the
-    /// notch's width, so a compact island reads as the notch growing
-    /// downward rather than a pill floating beside it. Zero elsewhere.
-    static func notchWidth(on screen: NSScreen?) -> CGFloat {
-        guard let screen, let notch = notchRect(on: screen) else { return 0 }
-        return notch.width
-    }
-
-    /// Hang the island from the top center of the screen. On a notched Mac
-    /// the top edge sits flush with the bottom of the notch, centered on it,
-    /// even when the menu bar is hidden; elsewhere it sits flush with the
-    /// bottom of the menu bar. Called again on every content size change so
-    /// the top edge stays put while the island grows downward.
-    func layoutTopCenter(contentSize: CGSize) {
+    /// Hang content from the top center of the screen, centered on the notch
+    /// where there is one. With `fromScreenTop` the frame starts at the very
+    /// top of the screen, over the notch and the menu bar beside it, so a
+    /// notch-shaped island grows out of the real notch; otherwise the top
+    /// edge sits flush with the bottom of the menu bar (or of the notch, if
+    /// the menu bar is hidden). Called again on every content size change so
+    /// the top edge stays put while the content grows downward.
+    func layoutTopCenter(contentSize: CGSize, fromScreenTop: Bool = false) {
         guard let screen = NSScreen.main else { return }
+        let notch = Self.notchRect(on: screen)
         let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
-        let top = screen.frame.maxY - max(screen.safeAreaInsets.top, menuBarHeight)
-        let centerX = Self.notchRect(on: screen)?.midX ?? screen.frame.midX
+        let top = fromScreenTop && notch != nil
+            ? screen.frame.maxY
+            : screen.frame.maxY - max(screen.safeAreaInsets.top, menuBarHeight)
+        let centerX = notch?.midX ?? screen.frame.midX
         let w = max(contentSize.width, 1)
         let h = max(contentSize.height, 1)
         setFrame(
@@ -109,12 +106,13 @@ struct WaveformView: View {
 
 // MARK: - Dictation island
 
-/// A glass capsule that hangs from the top center of the screen, out of the
-/// way; on a notched Mac it is never narrower than the notch, so it reads as
-/// the notch growing downward. The waveform moves as you speak and the words settle in below it,
-/// paragraph by paragraph: the newest words arrive light and darken as
-/// Parakeet confirms them, so you watch the transcript settle before it
-/// lands in the text field.
+/// The notch, grown: a dark glass shape that comes out of the notch itself
+/// on a notched Mac (black where they meet, flaring into the menu bar at
+/// the top corners, never narrower than the notch), and hangs from the menu
+/// bar elsewhere. The waveform moves as you speak and the words settle in
+/// below it, paragraph by paragraph: the newest words arrive dim and
+/// brighten as Parakeet confirms them, so you watch the transcript settle
+/// before it lands in the text field.
 struct DictationIslandView: View {
     @EnvironmentObject private var controller: DictationController
     @EnvironmentObject private var speech: SpeechStatus
@@ -128,22 +126,38 @@ struct DictationIslandView: View {
         controller.phase == .listening && !controller.liveText.isEmpty
     }
 
-    /// The glass carries 18 pt of padding on each side; the content is held
-    /// at least this wide so the glass is never narrower than the notch.
+    /// Ink on the dark glass.
+    private let ink = Color.white
+    private let inkSoft = Color.white.opacity(0.62)
+
+    /// The body carries 18 pt of padding on each side; the content is held
+    /// at least this wide so the body is never narrower than the notch.
     private var contentMinWidth: CGFloat {
-        max(0, controller.islandMinWidth - 36)
+        max(0, controller.notch.width - 36)
     }
 
     var body: some View {
+        let notch = controller.notch
         VStack(alignment: .leading, spacing: 0) {
-            header
-            if hasText {
-                transcript
-                    .padding(.top, 9)
+            // Over the physical notch; nothing is drawn there.
+            Color.clear.frame(height: notch.height)
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                if hasText {
+                    transcript
+                        .padding(.top, 9)
+                }
             }
+            .padding(.horizontal, 18)
+            .padding(.top, notch.isPresent ? 8 : 13)
+            .padding(.bottom, 14)
         }
-        .frame(minWidth: contentMinWidth, alignment: .leading)
-        .islandSurface()
+        .frame(minWidth: contentMinWidth + 36, alignment: .leading)
+        .islandSurface(
+            fillet: notch.isPresent ? 10 : 0,
+            bottomRadius: 22,
+            capHeight: notch.height
+        )
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -168,44 +182,45 @@ struct DictationIslandView: View {
                     LiveDot()
                     Text(speech.isReady ? "Listening" : "Getting the speech model ready")
                         .font(Brand.ui(12, weight: .semibold))
-                        .foregroundStyle(Brand.ink)
+                        .foregroundStyle(ink)
                 }
                 hint
 
             case .transcribing:
                 ProgressView()
                     .controlSize(.small)
+                    .colorScheme(.dark)
                 Text("Placing your words")
                     .font(Brand.ui(12, weight: .semibold))
-                    .foregroundStyle(Brand.ink)
+                    .foregroundStyle(ink)
 
             case .placed(let app):
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Brand.emerald)
                 Text("Placed in \(app)")
                     .font(Brand.ui(12, weight: .semibold))
-                    .foregroundStyle(Brand.ink)
+                    .foregroundStyle(ink)
 
             case .copied:
                 Image(systemName: "doc.on.clipboard.fill")
                     .foregroundStyle(Brand.emerald)
                 Text("Nothing to type into. Copied, so press ⌘V to paste.")
                     .font(Brand.ui(12, weight: .semibold))
-                    .foregroundStyle(Brand.ink)
+                    .foregroundStyle(ink)
 
             case .cancelled(let kept):
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(Brand.inkSoft)
+                    .foregroundStyle(inkSoft)
                 Text(kept ? "Cancelled. Kept in History." : "Cancelled")
                     .font(Brand.ui(12, weight: .semibold))
-                    .foregroundStyle(Brand.ink)
+                    .foregroundStyle(ink)
 
             case .error(let message):
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Brand.coral)
                 Text(message)
                     .font(Brand.ui(12, weight: .medium))
-                    .foregroundStyle(Brand.ink)
+                    .foregroundStyle(ink)
                     .lineLimit(2)
                     .frame(maxWidth: 360, alignment: .leading)
 
@@ -226,7 +241,7 @@ struct DictationIslandView: View {
             KeyCap(label: "esc")
         }
         .font(Brand.ui(10, weight: .medium))
-        .foregroundStyle(Brand.inkSoft)
+        .foregroundStyle(inkSoft)
         .padding(.leading, 4)
     }
 
@@ -240,7 +255,7 @@ struct DictationIslandView: View {
                     Text(fadedTail(paragraph))
                 } else {
                     Text(paragraph)
-                        .foregroundStyle(Brand.ink)
+                        .foregroundStyle(ink)
                 }
             }
         }
@@ -251,8 +266,8 @@ struct DictationIslandView: View {
     }
 
     /// Full ink for the words that have held steady since the last partial,
-    /// lighter ink for the words Parakeet has just added or revised; they
-    /// darken as the next partial confirms them.
+    /// dimmer ink for the words Parakeet has just added or revised; they
+    /// brighten as the next partial confirms them.
     private func fadedTail(_ paragraph: String) -> AttributedString {
         let words = Self.words(of: paragraph)
         var settled = 0
@@ -262,7 +277,7 @@ struct DictationIslandView: View {
         var result = AttributedString()
         for (index, word) in words.enumerated() {
             var piece = AttributedString(word)
-            piece.foregroundColor = index < settled ? Brand.ink : Brand.ink.opacity(0.45)
+            piece.foregroundColor = index < settled ? ink : ink.opacity(0.45)
             result += piece
             if index < words.count - 1 {
                 result += AttributedString(" ")

@@ -16,6 +16,12 @@ struct VisualEffectView: NSViewRepresentable {
     var emphasized: Bool = false
     var radius: CGFloat = 0
     var roundTop: Bool = true
+    /// Mask to the notch silhouette (concave top corners, round bottom
+    /// corners) instead of a plain rounded rectangle.
+    var notch: NotchCorners? = nil
+    /// Force the dark appearance, so the island reads as smoked glass in
+    /// light mode too, the way the notch is black in either.
+    var dark: Bool = false
 
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
@@ -33,8 +39,20 @@ struct VisualEffectView: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.isEmphasized = emphasized
-        view.maskImage = radius > 0 ? GlassMask.image(radius: radius, roundTop: roundTop) : nil
+        view.appearance = dark ? NSAppearance(named: .darkAqua) : nil
+        if let notch {
+            view.maskImage = GlassMask.notchImage(fillet: notch.fillet, bottomRadius: notch.bottom)
+        } else {
+            view.maskImage = radius > 0 ? GlassMask.image(radius: radius, roundTop: roundTop) : nil
+        }
     }
+}
+
+/// The two radii of a notch silhouette: the concave flare at the top
+/// corners where it meets the top of the screen, and the round bottom.
+struct NotchCorners: Equatable {
+    var fillet: CGFloat
+    var bottom: CGFloat
 }
 
 /// A resizable mask image with the chosen corners rounded. Cap insets equal
@@ -82,6 +100,91 @@ enum GlassMask {
         image.capInsets = NSEdgeInsets(top: r, left: r, bottom: r, right: r)
         image.resizingMode = .stretch
         return image
+    }
+
+    /// A resizable mask in the notch silhouette: the top corners flare
+    /// outward (concave, radius `fillet`) so the shape grows out of the top
+    /// edge the way the notch does, and the bottom corners are round. The
+    /// same quadratic corners as `NotchShape`, so the SwiftUI overlays and
+    /// the blur agree to the pixel.
+    static func notchImage(fillet: CGFloat, bottomRadius: CGFloat) -> NSImage {
+        let f = max(fillet, 0)
+        let r = max(bottomRadius, 1)
+        let side = f + r
+        let image = NSImage(size: NSSize(width: side * 2 + 2, height: f + r + 2), flipped: false) { rect in
+            let W = rect.maxX
+            let H = rect.maxY
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: 0, y: H))
+            if f > 0 {
+                path.quad(to: NSPoint(x: f, y: H - f), control: NSPoint(x: f, y: H))
+            }
+            path.line(to: NSPoint(x: f, y: r))
+            path.quad(to: NSPoint(x: f + r, y: 0), control: NSPoint(x: f, y: 0))
+            path.line(to: NSPoint(x: W - f - r, y: 0))
+            path.quad(to: NSPoint(x: W - f, y: r), control: NSPoint(x: W - f, y: 0))
+            path.line(to: NSPoint(x: W - f, y: H - f))
+            if f > 0 {
+                path.quad(to: NSPoint(x: W, y: H), control: NSPoint(x: W - f, y: H))
+            }
+            path.close()
+            NSColor.black.setFill()
+            path.fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: f, left: side, bottom: r, right: side)
+        image.resizingMode = .stretch
+        return image
+    }
+}
+
+extension NSBezierPath {
+    /// A quadratic curve, as the cubic it is equivalent to.
+    func quad(to end: NSPoint, control: NSPoint) {
+        let start = currentPoint
+        let c1 = NSPoint(x: start.x + (control.x - start.x) * 2 / 3, y: start.y + (control.y - start.y) * 2 / 3)
+        let c2 = NSPoint(x: end.x + (control.x - end.x) * 2 / 3, y: end.y + (control.y - end.y) * 2 / 3)
+        curve(to: end, controlPoint1: c1, controlPoint2: c2)
+    }
+}
+
+// MARK: - Notch silhouette
+
+/// The notch's outline, extended: concave top corners that flare into the
+/// top edge of the screen, straight sides, round bottom corners. The rect
+/// includes the flares, so the body proper runs from `minX + top` to
+/// `maxX - top`. With `topCornerRadius` zero it is a plain shape with square
+/// top corners, for screens without a notch.
+struct NotchShape: Shape {
+    var topCornerRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let t = max(topCornerRadius, 0)
+        let b = max(bottomCornerRadius, 0)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + t, y: rect.minY + t),
+            control: CGPoint(x: rect.minX + t, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + t, y: rect.maxY - b))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + t + b, y: rect.maxY),
+            control: CGPoint(x: rect.minX + t, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - t - b, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - t, y: rect.maxY - b),
+            control: CGPoint(x: rect.maxX - t, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - t, y: rect.minY + t))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.maxX - t, y: rect.minY)
+        )
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -199,16 +302,103 @@ extension View {
         modifier(GlassSurface(radius: radius, roundTop: true, material: material))
     }
 
-    /// The "hangs from the top" island: square top so it meets the menu bar,
-    /// rounded bottom so it reads as an island dropping down. No top padding so
-    /// the surface sits flush against the menu bar; outer padding leaves room
-    /// for the shadow inside the panel's frame.
-    func islandSurface() -> some View {
+}
+
+// MARK: - Island surface
+
+/// The island's surface: the notch, grown. Black where it meets the notch
+/// (the top `capHeight` sits over the physical notch), fading into dark
+/// smoked glass below, with concave flares into the menu bar at the top
+/// corners, a faint emerald cast, an edge that catches light, and a deep
+/// shadow with a green glow. On a screen without a notch, `fillet` and
+/// `capHeight` are zero and it hangs from the menu bar with square top
+/// corners.
+struct NotchSurface: ViewModifier {
+    var fillet: CGFloat
+    var bottomRadius: CGFloat
+    var capHeight: CGFloat
+
+    private var shape: NotchShape {
+        NotchShape(topCornerRadius: fillet, bottomCornerRadius: bottomRadius)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            // Room for the flares on either side of the body.
+            .padding(.horizontal, fillet)
+            .background(
+                ZStack {
+                    VisualEffectView(
+                        material: .hudWindow,
+                        notch: NotchCorners(fillet: fillet, bottom: bottomRadius),
+                        dark: true
+                    )
+                    // Solid black over the notch and the flares, melting
+                    // into the glass just below the menu bar line.
+                    VStack(spacing: 0) {
+                        Color.black.frame(height: capHeight + 1)
+                        LinearGradient(
+                            colors: [Color.black, Color.black.opacity(0.30)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                        .frame(height: 26)
+                        Color.black.opacity(0.30)
+                    }
+                    // The brand green, cast in from the top-leading corner.
+                    LinearGradient(
+                        colors: [Brand.emerald.opacity(0.22), Brand.emerald.opacity(0)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                    // Thickness: the pane darkens a touch toward its bottom edge.
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.black.opacity(0), location: 0),
+                            .init(color: Color.black.opacity(0), location: 0.7),
+                            .init(color: Color.black.opacity(0.28), location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                }
+                .clipShape(shape)
+            )
+            .overlay(
+                // A hairline that catches light down the sides and turns
+                // emerald along the bottom; clipped so half the stroke sits
+                // inside the edge.
+                shape
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0),
+                                Color.white.opacity(0.16),
+                                Brand.emerald.opacity(0.42),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 2
+                    )
+                    .clipShape(shape)
+            )
+            .background(
+                shape
+                    .fill(Color.black.opacity(0.5))
+                    .blur(radius: 18)
+                    .offset(y: 10)
+            )
+            .background(
+                shape
+                    .fill(Brand.emerald.opacity(0.26))
+                    .blur(radius: 26)
+                    .offset(y: 4)
+            )
+    }
+}
+
+extension View {
+    /// The island surface, with room around it for the shadow.
+    func islandSurface(fillet: CGFloat, bottomRadius: CGFloat, capHeight: CGFloat) -> some View {
         self
-            .padding(.horizontal, 18)
-            .padding(.top, 13)
-            .padding(.bottom, 14)
-            .modifier(GlassSurface(radius: 22, roundTop: false))
+            .modifier(NotchSurface(fillet: fillet, bottomRadius: bottomRadius, capHeight: capHeight))
             .padding(.horizontal, 28)
             .padding(.bottom, 30)
             .fixedSize()
@@ -243,16 +433,16 @@ struct KeyCap: View {
     var body: some View {
         Text(label)
             .font(Brand.ui(10, weight: .semibold))
-            .foregroundStyle(Brand.inkSoft)
+            .foregroundStyle(Color.white.opacity(0.78))
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Brand.emerald.opacity(0.09))
+                    .fill(Color.white.opacity(0.10))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(Brand.emerald.opacity(0.22), lineWidth: 0.5)
+                    .strokeBorder(Brand.emerald.opacity(0.35), lineWidth: 0.5)
             )
     }
 }
