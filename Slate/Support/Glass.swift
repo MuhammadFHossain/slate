@@ -11,7 +11,7 @@ import SwiftUI
 /// backdrop is composited by the window server and ignores CALayer masks, so
 /// a plain `clipShape` would leave square blur corners poking out.
 struct VisualEffectView: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .hudWindow
+    var material: NSVisualEffectView.Material = .popover
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     var emphasized: Bool = false
     var radius: CGFloat = 0
@@ -87,13 +87,17 @@ enum GlassMask {
 
 // MARK: - Glass surface
 
-/// A glass card: system blur, a soft top-lit sheen, a faint emerald cast, a
-/// hairline edge that catches the light, and a deep diffuse shadow. `roundTop`
-/// false gives the island its hangs-from-the-menu-bar silhouette.
+/// A glass card, built the way light actually behaves on a pane: the system
+/// blur underneath, thin enough sheen that what is behind still shows
+/// through, a light catch near the top-left corner, a specular line just
+/// inside the top edge, a touch of shade along the bottom for thickness, an
+/// outer edge that is white where the light hits and emerald where it
+/// leaves, and a deep diffuse shadow with a green glow. `roundTop` false
+/// gives the island its hangs-from-the-menu-bar silhouette.
 struct GlassSurface: ViewModifier {
     var radius: CGFloat
     var roundTop: Bool = true
-    var material: NSVisualEffectView.Material = .hudWindow
+    var material: NSVisualEffectView.Material = .popover
 
     @Environment(\.colorScheme) private var scheme
 
@@ -109,35 +113,65 @@ struct GlassSurface: ViewModifier {
 
     private var dark: Bool { scheme == .dark }
 
+    /// White at one opacity in light mode and another in dark.
+    private func white(_ light: Double, _ darkValue: Double) -> Color {
+        Color.white.opacity(dark ? darkValue : light)
+    }
+
     func body(content: Content) -> some View {
         content
             .background(
                 ZStack {
                     VisualEffectView(material: material, radius: radius, roundTop: roundTop)
-                    // Sheen: brighter along the top edge, like light on glass.
+                    // Sheen: brighter along the top, thin enough that the app
+                    // behind the glass still shows through.
                     LinearGradient(
-                        colors: [
-                            Color.white.opacity(dark ? 0.16 : 0.62),
-                            Color.white.opacity(dark ? 0.03 : 0.22),
-                        ],
+                        colors: [white(0.42, 0.12), white(0.10, 0.02)],
                         startPoint: .top, endPoint: .bottom
                     )
-                    // A whisper of the brand green, top-leading to nothing.
+                    // The brand green, cast in from the top-leading corner.
                     LinearGradient(
-                        colors: [Brand.emerald.opacity(dark ? 0.14 : 0.10), Brand.emerald.opacity(0)],
+                        colors: [Brand.emerald.opacity(dark ? 0.20 : 0.16), Brand.emerald.opacity(0)],
                         startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                    // A light catch near the top-left, the way a lamp sits on glass.
+                    RadialGradient(
+                        colors: [white(0.55, 0.18), Color.white.opacity(0)],
+                        center: UnitPoint(x: 0.18, y: 0), startRadius: 0, endRadius: 170
+                    )
+                    // Thickness: the pane darkens a touch toward its bottom edge.
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.black.opacity(0), location: 0),
+                            .init(color: Color.black.opacity(0), location: 0.65),
+                            .init(color: Color.black.opacity(dark ? 0.22 : 0.07), location: 1),
+                        ],
+                        startPoint: .top, endPoint: .bottom
                     )
                 }
                 .clipShape(shape)
             )
             .overlay(
+                // Outer edge: white where the light hits the top, a whisper of
+                // emerald where it leaves the bottom.
                 shape.strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(dark ? 0.40 : 0.95),
-                            Color.white.opacity(dark ? 0.10 : 0.40),
+                            white(1.0, 0.55),
+                            white(0.45, 0.14),
+                            Brand.emerald.opacity(dark ? 0.45 : 0.35),
                         ],
                         startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+            )
+            .overlay(
+                // Specular line just inside the top edge.
+                shape.inset(by: 1.5).strokeBorder(
+                    LinearGradient(
+                        colors: [white(0.70, 0.30), Color.white.opacity(0)],
+                        startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.4)
                     ),
                     lineWidth: 1
                 )
@@ -152,7 +186,7 @@ struct GlassSurface: ViewModifier {
             )
             .background(
                 shape
-                    .fill(Brand.emerald.opacity(dark ? 0.18 : 0.12))
+                    .fill(Brand.emerald.opacity(dark ? 0.26 : 0.20))
                     .blur(radius: 26)
                     .offset(y: 4)
             )
@@ -161,7 +195,7 @@ struct GlassSurface: ViewModifier {
 
 extension View {
     /// A free-standing glass card with all corners rounded.
-    func glassCard(radius: CGFloat = 18, material: NSVisualEffectView.Material = .hudWindow) -> some View {
+    func glassCard(radius: CGFloat = 18, material: NSVisualEffectView.Material = .popover) -> some View {
         modifier(GlassSurface(radius: radius, roundTop: true, material: material))
     }
 
@@ -214,11 +248,11 @@ struct KeyCap: View {
             .padding(.vertical, 2)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color.primary.opacity(0.06))
+                    .fill(Brand.emerald.opacity(0.09))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                    .strokeBorder(Brand.emerald.opacity(0.22), lineWidth: 0.5)
             )
     }
 }
