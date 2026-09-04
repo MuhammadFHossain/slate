@@ -106,10 +106,9 @@ struct WaveformView: View {
 
 // MARK: - Dictation island
 
-/// The notch, grown: a dark glass shape that comes out of the notch itself
-/// on a notched Mac (black where they meet, flaring into the menu bar at
-/// the top corners, never narrower than the notch), and hangs from the menu
-/// bar elsewhere. The waveform moves as you speak and the words settle in
+/// The notch, grown: a deep black shape that comes out of the notch itself
+/// on a notched Mac (flaring into the menu bar at the top corners, never
+/// narrower than the notch), and hangs from the menu bar elsewhere. The waveform moves as you speak and the words settle in
 /// below it, paragraph by paragraph: the newest words arrive dim and
 /// brighten as Parakeet confirms them, so you watch the transcript settle
 /// before it lands in the text field.
