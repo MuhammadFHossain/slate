@@ -32,6 +32,9 @@ final class DictationController: ObservableObject {
     /// The transcript so far, formatted, paragraphs separated by blank lines.
     /// The last paragraph is the stretch still being spoken.
     @Published var liveText: String = ""
+    /// The notch's width on the screen the island is showing on (zero on
+    /// screens without one), so the island is never narrower than it.
+    @Published var islandMinWidth: CGFloat = 0
 
     var isBusy: Bool { phase == .listening || phase == .transcribing }
 
@@ -281,6 +284,7 @@ final class DictationController: ObservableObject {
     // MARK: - Island window
 
     private func showIsland() {
+        islandMinWidth = FloatingPanel.notchWidth(on: NSScreen.main)
         if panel == nil {
             let content = DictationIslandView(onResize: { [weak self] size in
                 self?.lastIslandSize = size

@@ -30,18 +30,44 @@ final class FloatingPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
 
-    /// Hang the island from the top center of the screen, its top edge flush
-    /// with the bottom of the menu bar (centered under the notch on notched
-    /// Macs) so it reads as part of the top, not a pill floating below it.
-    /// Called again on every content size change so the top edge stays put
-    /// while the island grows downward.
+    /// The notch on a notched Mac, in screen coordinates: the gap between the
+    /// two top auxiliary areas, as tall as the top safe-area inset. Nil on
+    /// screens without one.
+    static func notchRect(on screen: NSScreen) -> NSRect? {
+        let inset = screen.safeAreaInsets.top
+        guard inset > 0,
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea,
+              right.minX > left.maxX
+        else { return nil }
+        return NSRect(
+            x: left.maxX, y: screen.frame.maxY - inset,
+            width: right.minX - left.maxX, height: inset
+        )
+    }
+
+    /// How wide the island's glass should be at minimum on this screen: the
+    /// notch's width, so a compact island reads as the notch growing
+    /// downward rather than a pill floating beside it. Zero elsewhere.
+    static func notchWidth(on screen: NSScreen?) -> CGFloat {
+        guard let screen, let notch = notchRect(on: screen) else { return 0 }
+        return notch.width
+    }
+
+    /// Hang the island from the top center of the screen. On a notched Mac
+    /// the top edge sits flush with the bottom of the notch, centered on it,
+    /// even when the menu bar is hidden; elsewhere it sits flush with the
+    /// bottom of the menu bar. Called again on every content size change so
+    /// the top edge stays put while the island grows downward.
     func layoutTopCenter(contentSize: CGSize) {
         guard let screen = NSScreen.main else { return }
-        let top = screen.visibleFrame.maxY
+        let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+        let top = screen.frame.maxY - max(screen.safeAreaInsets.top, menuBarHeight)
+        let centerX = Self.notchRect(on: screen)?.midX ?? screen.frame.midX
         let w = max(contentSize.width, 1)
         let h = max(contentSize.height, 1)
         setFrame(
-            NSRect(x: (screen.frame.midX - w / 2).rounded(), y: top - h, width: w, height: h),
+            NSRect(x: (centerX - w / 2).rounded(), y: top - h, width: w, height: h),
             display: true
         )
         // Positioning only. Showing and hiding is the caller's job, so a resize
@@ -84,7 +110,8 @@ struct WaveformView: View {
 // MARK: - Dictation island
 
 /// A glass capsule that hangs from the top center of the screen, out of the
-/// way. The waveform moves as you speak and the words settle in below it,
+/// way; on a notched Mac it is never narrower than the notch, so it reads as
+/// the notch growing downward. The waveform moves as you speak and the words settle in below it,
 /// paragraph by paragraph: the newest words arrive light and darken as
 /// Parakeet confirms them, so you watch the transcript settle before it
 /// lands in the text field.
@@ -101,6 +128,12 @@ struct DictationIslandView: View {
         controller.phase == .listening && !controller.liveText.isEmpty
     }
 
+    /// The glass carries 18 pt of padding on each side; the content is held
+    /// at least this wide so the glass is never narrower than the notch.
+    private var contentMinWidth: CGFloat {
+        max(0, controller.islandMinWidth - 36)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -109,6 +142,7 @@ struct DictationIslandView: View {
                     .padding(.top, 9)
             }
         }
+        .frame(minWidth: contentMinWidth, alignment: .leading)
         .islandSurface()
         .background(
             GeometryReader { proxy in
