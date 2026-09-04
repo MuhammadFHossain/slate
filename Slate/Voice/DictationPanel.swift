@@ -202,9 +202,8 @@ struct DictationIslandView: View {
                     .foregroundStyle(ink)
 
             case .copied:
-                Image(systemName: "doc.on.clipboard.fill")
-                    .foregroundStyle(Brand.emerald)
-                Text("Nothing to type into. Copied, so press ⌘V to paste.")
+                KeyCap(label: "⌘V")
+                Text("Copied. Paste anywhere.")
                     .font(Brand.ui(12, weight: .semibold))
                     .foregroundStyle(ink)
 

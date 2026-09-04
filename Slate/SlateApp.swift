@@ -40,8 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The menu-bar dropdown: status, the way-to-talk picker, what you said most
-/// recently (newest first, click to copy), History, and settings.
+/// The menu-bar dropdown: status, the way-to-talk picker, Recent (the last
+/// five, click to copy) and History (the whole record) as two separate
+/// items, then Settings and the essentials.
 struct SlateMenu: View {
     @AppStorage(Prefs.activationMode) private var mode = ActivationMode.hold.rawValue
     @AppStorage(Prefs.spaceAfter) private var spaceAfter = true
@@ -81,15 +82,19 @@ struct SlateMenu: View {
 
         Divider()
 
-        Text("Recent")
-        if history.entries.isEmpty {
-            Text("Nothing dictated yet")
-        } else {
-            ForEach(Array(history.entries.prefix(5))) { entry in
-                Button(entry.preview) {
-                    TextInserter.copyToClipboard(entry.text)
+        // Recent and History are two different things: the last five, one
+        // click from the clipboard, and the whole record in its own window.
+        Menu("Recent") {
+            if history.entries.isEmpty {
+                Text("Nothing dictated yet")
+            } else {
+                Text("Click one to copy it")
+                Divider()
+                ForEach(Array(history.entries.prefix(5))) { entry in
+                    Button(entry.preview) {
+                        TextInserter.copyToClipboard(entry.text)
+                    }
                 }
-                .help("Copy to clipboard")
             }
         }
         Button("History…") { HistoryWindowController.shared.show() }
