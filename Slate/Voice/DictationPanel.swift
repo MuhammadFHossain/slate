@@ -109,9 +109,10 @@ struct WaveformView: View {
 /// The notch, grown: a deep black shape that comes out of the notch itself
 /// on a notched Mac (flaring into the menu bar at the top corners, never
 /// narrower than the notch), and hangs from the menu bar elsewhere. The waveform moves as you speak and the words settle in
-/// below it, paragraph by paragraph: the newest words arrive dim and
-/// brighten as Parakeet confirms them, so you watch the transcript settle
-/// before it lands in the text field.
+/// below it, paragraph by paragraph: the newest words arrive dim, a word
+/// Parakeet corrects flashes mint, and everything settles to white as the
+/// next pass confirms it, so you watch the transcript fix itself before it
+/// lands in the text field.
 struct DictationIslandView: View {
     @EnvironmentObject private var controller: DictationController
     @EnvironmentObject private var speech: SpeechStatus
@@ -264,9 +265,11 @@ struct DictationIslandView: View {
         .animation(.easeOut(duration: 0.18), value: controller.liveText)
     }
 
-    /// Full ink for the words that have held steady since the last partial,
-    /// dimmer ink for the words Parakeet has just added or revised; they
-    /// brighten as the next partial confirms them.
+    /// Three inks tell you what just happened: full white for words that
+    /// have held steady since the last partial, mint for words Parakeet just
+    /// changed its mind about (they replaced words that were already on
+    /// screen), dim for words it only just heard. Everything settles to
+    /// white as the next partial confirms it.
     private func fadedTail(_ paragraph: String) -> AttributedString {
         let words = Self.words(of: paragraph)
         var settled = 0
@@ -276,7 +279,13 @@ struct DictationIslandView: View {
         var result = AttributedString()
         for (index, word) in words.enumerated() {
             var piece = AttributedString(word)
-            piece.foregroundColor = index < settled ? ink : ink.opacity(0.45)
+            if index < settled {
+                piece.foregroundColor = ink
+            } else if index < previousWords.count {
+                piece.foregroundColor = Brand.mint
+            } else {
+                piece.foregroundColor = ink.opacity(0.45)
+            }
             result += piece
             if index < words.count - 1 {
                 result += AttributedString(" ")
