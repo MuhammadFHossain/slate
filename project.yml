@@ -6,7 +6,9 @@ options:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    from: 0.12.4
+    # UnifiedAsrManager (the Parakeet Unified offline path Slate uses) first
+    # shipped in v0.15.3; anything older does not build.
+    from: 0.15.3
 settings:
   base:
     SWIFT_VERSION: "5.0"

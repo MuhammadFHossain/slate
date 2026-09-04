@@ -49,119 +49,64 @@ final class FloatingPanel: NSPanel {
     }
 }
 
-// MARK: - Shared island surface
-
-/// The "hangs from the top" surface: square top corners so it meets the menu
-/// bar cleanly, rounded bottom corners so it reads as an island dropping down.
-/// No top padding, so the surface sits flush against the menu bar.
-struct IslandSurface: ViewModifier {
-    func body(content: Content) -> some View {
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: 0, bottomLeadingRadius: 20,
-            bottomTrailingRadius: 20, topTrailingRadius: 0, style: .continuous
-        )
-        return content
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(
-                shape
-                    .fill(Brand.surface)
-                    .overlay(shape.strokeBorder(Brand.emerald.opacity(0.5), lineWidth: 1.5))
-                    .shadow(color: Brand.emerald.opacity(0.22), radius: 12, y: 5)
-            )
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .fixedSize()
-    }
-}
-
-extension View {
-    func islandSurface() -> some View { modifier(IslandSurface()) }
-}
-
 // MARK: - Waveform
 
-/// Live waveform: a row of capsules breathing with the mic level.
+/// Live waveform: a row of capsules breathing with the mic level, each with
+/// its own reach so the row moves like a voice rather than a meter.
 struct WaveformView: View {
     var level: Float
-    var tint: Color = Brand.emerald
-    var barCount: Int = 5
+    var barCount: Int = 7
 
     var body: some View {
-        HStack(spacing: 3.5) {
+        HStack(spacing: 3) {
             ForEach(0..<barCount, id: \.self) { index in
                 Capsule()
-                    .fill(tint.gradient)
-                    .frame(width: 4, height: barHeight(index))
+                    .fill(Brand.accent)
+                    .frame(width: 3.5, height: barHeight(index))
+                    .shadow(color: Brand.emerald.opacity(0.35), radius: 3)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: level)
+        .frame(width: 44, height: 22)
+        .animation(.easeOut(duration: 0.16), value: level)
     }
 
     private func barHeight(_ index: Int) -> CGFloat {
         let center = Double(barCount - 1) / 2
-        let falloff = 1.0 - abs(Double(index) - center) / (center + 1.2)
-        let base: CGFloat = 5
+        let distance = abs(Double(index) - center) / max(center, 1)
+        let falloff = 1.0 - distance * 0.55
+        let reach = 0.85 + 0.15 * sin(Double(index) * 1.7)
+        let base: CGFloat = 4
         // Hard cap: bars breathe inside their row, never past it.
-        return min(22, base + CGFloat(Double(level) * 22 * falloff))
+        return min(22, base + CGFloat(Double(level) * 19 * falloff * reach))
     }
 }
 
 // MARK: - Dictation island
 
-/// A small capsule that hangs from the top center of the screen, out of the
-/// way. The waveform moves as you speak and the words type out below it; words
-/// that Parakeet has just revised carry a lime highlight, so you watch the
-/// transcript settle in real time before it lands in the text field.
+/// A glass capsule that hangs from the top center of the screen, out of the
+/// way. The waveform moves as you speak and the words settle in below it,
+/// paragraph by paragraph: the newest words arrive light and darken as
+/// Parakeet confirms them, so you watch the transcript settle before it
+/// lands in the text field.
 struct DictationIslandView: View {
-    @EnvironmentObject var controller: DictationController
+    @EnvironmentObject private var controller: DictationController
+    @EnvironmentObject private var speech: SpeechStatus
     var onResize: (CGSize) -> Void
 
-    /// The previous partial's words, so the current one can highlight what changed.
-    @State private var prevWords: [String] = []
+    /// The previous open paragraph's words, so the current one can show
+    /// which of its words are new.
+    @State private var previousWords: [String] = []
 
     private var hasText: Bool {
         controller.phase == .listening && !controller.liveText.isEmpty
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: hasText ? 8 : 0) {
-            HStack(spacing: 10) {
-                switch controller.phase {
-                case .listening:
-                    WaveformView(level: controller.level, tint: Brand.emerald)
-                        .frame(width: 44, height: 20)
-                        .clipped()
-                    if controller.liveText.isEmpty {
-                        Text("Listening…")
-                            .font(Brand.text(12, weight: .medium))
-                            .foregroundStyle(Brand.emerald.opacity(0.9))
-                    }
-                case .transcribing:
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(Brand.emerald)
-                    Text("Placing your words…")
-                        .font(Brand.text(12, weight: .medium))
-                        .foregroundStyle(Brand.emerald.opacity(0.9))
-                case .error(let message):
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Brand.coral)
-                    Text(message)
-                        .font(Brand.text(12))
-                        .foregroundStyle(Brand.deepGreen)
-                        .lineLimit(2)
-                case .idle:
-                    EmptyView()
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            header
             if hasText {
-                Text(liveAttributed())
-                    .font(Brand.text(15))
-                    .lineLimit(3)
-                    .frame(maxWidth: 360, alignment: .leading)
-                    .contentTransition(.interpolate)
-                    .animation(.easeOut(duration: 0.22), value: controller.liveText)
+                transcript
+                    .padding(.top, 9)
             }
         }
         .islandSurface()
@@ -173,33 +118,138 @@ struct DictationIslandView: View {
             }
         )
         .onChange(of: controller.liveText) { oldValue, _ in
-            prevWords = oldValue.split(separator: " ").map(String.init)
+            previousWords = Self.words(of: Self.visibleParagraphs(oldValue).last ?? "")
         }
     }
 
-    /// Deep green for settled words; a lime highlight on everything from the
-    /// first word that changed since the last partial, so a correction lights up
-    /// and then calms as the next partial confirms it.
-    private func liveAttributed() -> AttributedString {
-        let words = controller.liveText.split(separator: " ").map(String.init)
-        var firstChanged = 0
-        while firstChanged < words.count,
-              firstChanged < prevWords.count,
-              words[firstChanged] == prevWords[firstChanged] {
-            firstChanged += 1
+    // MARK: Header
+
+    @ViewBuilder
+    private var header: some View {
+        HStack(spacing: 10) {
+            switch controller.phase {
+            case .listening:
+                WaveformView(level: controller.level)
+                if !hasText {
+                    LiveDot()
+                    Text(speech.isReady ? "Listening" : "Getting the speech model ready")
+                        .font(Brand.ui(12, weight: .semibold))
+                        .foregroundStyle(Brand.ink)
+                }
+                hint
+
+            case .transcribing:
+                ProgressView()
+                    .controlSize(.small)
+                Text("Placing your words")
+                    .font(Brand.ui(12, weight: .semibold))
+                    .foregroundStyle(Brand.ink)
+
+            case .placed(let app):
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Brand.emerald)
+                Text("Placed in \(app)")
+                    .font(Brand.ui(12, weight: .semibold))
+                    .foregroundStyle(Brand.ink)
+
+            case .copied:
+                Image(systemName: "doc.on.clipboard.fill")
+                    .foregroundStyle(Brand.emerald)
+                Text("Nothing to type into. Copied, so press ⌘V to paste.")
+                    .font(Brand.ui(12, weight: .semibold))
+                    .foregroundStyle(Brand.ink)
+
+            case .cancelled(let kept):
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(Brand.inkSoft)
+                Text(kept ? "Cancelled. Kept in History." : "Cancelled")
+                    .font(Brand.ui(12, weight: .semibold))
+                    .foregroundStyle(Brand.ink)
+
+            case .error(let message):
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Brand.coral)
+                Text(message)
+                    .font(Brand.ui(12, weight: .medium))
+                    .foregroundStyle(Brand.ink)
+                    .lineLimit(2)
+                    .frame(maxWidth: 360, alignment: .leading)
+
+            case .idle:
+                EmptyView()
+            }
+        }
+    }
+
+    private var hint: some View {
+        HStack(spacing: 5) {
+            if ActivationMode.current == .tap {
+                KeyCap(label: "⌥")
+                Text("to place")
+            } else {
+                Text("release to place")
+            }
+            KeyCap(label: "esc")
+        }
+        .font(Brand.ui(10, weight: .medium))
+        .foregroundStyle(Brand.inkSoft)
+        .padding(.leading, 4)
+    }
+
+    // MARK: Transcript
+
+    private var transcript: some View {
+        let paragraphs = Self.visibleParagraphs(controller.liveText)
+        return VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                if index == paragraphs.count - 1 {
+                    Text(fadedTail(paragraph))
+                } else {
+                    Text(paragraph)
+                        .foregroundStyle(Brand.ink)
+                }
+            }
+        }
+        .font(Brand.body(15))
+        .frame(width: 400, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .animation(.easeOut(duration: 0.18), value: controller.liveText)
+    }
+
+    /// Full ink for the words that have held steady since the last partial,
+    /// lighter ink for the words Parakeet has just added or revised; they
+    /// darken as the next partial confirms them.
+    private func fadedTail(_ paragraph: String) -> AttributedString {
+        let words = Self.words(of: paragraph)
+        var settled = 0
+        while settled < words.count, settled < previousWords.count, words[settled] == previousWords[settled] {
+            settled += 1
         }
         var result = AttributedString()
         for (index, word) in words.enumerated() {
             var piece = AttributedString(word)
-            piece.foregroundColor = Brand.deepGreen
-            if index >= firstChanged {
-                piece.backgroundColor = Brand.lime
-            }
+            piece.foregroundColor = index < settled ? Brand.ink : Brand.ink.opacity(0.45)
             result += piece
             if index < words.count - 1 {
                 result += AttributedString(" ")
             }
         }
         return result
+    }
+
+    /// The last two paragraphs, each trimmed from the front so the newest
+    /// words are always the ones on screen.
+    private static func visibleParagraphs(_ text: String) -> [String] {
+        let all = text.components(separatedBy: "\n\n").filter { !$0.isEmpty }
+        return all.suffix(2).map { paragraph in
+            guard paragraph.count > 220 else { return paragraph }
+            let cut = paragraph.suffix(220).drop(while: { !$0.isWhitespace })
+            return "…" + cut.trimmingCharacters(in: .whitespaces)
+        }
+    }
+
+    /// Split on spaces only, so a line break inside a paragraph stays put.
+    private static func words(of text: String) -> [String] {
+        text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
     }
 }

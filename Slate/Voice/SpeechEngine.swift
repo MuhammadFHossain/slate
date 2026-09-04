@@ -2,25 +2,84 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
-/// On-device speech-to-text: Parakeet Unified 0.6B (FastConformer) through
+/// Where the speech model is right now, for the menu and the island.
+@MainActor
+final class SpeechStatus: ObservableObject {
+    static let shared = SpeechStatus()
+
+    enum State: Equatable {
+        case cold
+        case downloading
+        case loading
+        case ready
+        case failed(String)
+    }
+
+    @Published var state: State = .cold
+
+    var isReady: Bool { state == .ready }
+}
+
+/// On-device speech-to-text: Parakeet Unified (FastConformer) through
 /// FluidAudio, running on the Neural Engine. Nothing spoken leaves the Mac.
 actor SpeechEngine {
     static let shared = SpeechEngine()
 
     private var manager: UnifiedAsrManager?
+    private var loading: Task<Void, Error>?
 
+    /// Load once, however many callers arrive at the same time. The very
+    /// first load on a Mac also downloads the model; the status says so.
     func ensureLoaded() async throws {
-        guard manager == nil else { return }
-        let asr = UnifiedAsrManager()
-        try await asr.loadModels()  // downloads to App Support/FluidAudio on first run
-        manager = asr
+        if manager != nil { return }
+        if let loading {
+            try await loading.value
+            return
+        }
+        let task = Task<Void, Error> {
+            let needsDownload = !Self.modelLooksDownloaded()
+            await MainActor.run {
+                SpeechStatus.shared.state = needsDownload ? .downloading : .loading
+            }
+            do {
+                let asr = UnifiedAsrManager()
+                try await asr.loadModels()  // App Support/FluidAudio on first run
+                self.manager = asr
+                await MainActor.run { SpeechStatus.shared.state = .ready }
+            } catch {
+                await MainActor.run { SpeechStatus.shared.state = .failed(error.localizedDescription) }
+                throw error
+            }
+        }
+        loading = task
+        defer { loading = nil }
+        try await task.value
+    }
+
+    /// Pay the model load and the first-inference compile at launch, in the
+    /// background, so the first dictation is as snappy as the tenth. The
+    /// first inference on a cold CoreML model is the slow one; a second of
+    /// near-silence is enough to get it out of the way.
+    func warmUp() async {
+        do {
+            try await ensureLoaded()
+            guard let manager else { return }
+            var quiet = [Float](repeating: 0, count: 16_000)
+            for index in quiet.indices where index % 97 == 0 {
+                quiet[index] = 0.0004
+            }
+            _ = try await manager.transcribe(quiet)
+            Log.write("speech engine warm")
+        } catch {
+            Log.write("speech warm-up failed: \(error)")
+        }
     }
 
     /// 16 kHz mono Float32 samples in, text out.
     func transcribe(_ samples: [Float]) async throws -> String {
         try await ensureLoaded()
         guard let manager else { throw BlueError("Speech model failed to load.") }
-        // Below ~a quarter second there is nothing to transcribe.
+        // Below about a quarter second there is nothing to transcribe.
         guard samples.count > 4000 else { return "" }
         // Quiet capture (distant mic, low gain, lid down) still transcribes
         // if we bring it up to a normal level first. Anything below the
@@ -39,6 +98,22 @@ actor SpeechEngine {
     func transcribe(url: URL) async throws -> String {
         let samples = try Self.loadSamples16kMono(url: url)
         return try await transcribe(samples)
+    }
+
+    /// FluidAudio keeps its models under Application Support/FluidAudio/Models.
+    /// A folder for the unified model being there is a good enough sign that
+    /// the first-run download is done and this load is just a load.
+    private static func modelLooksDownloaded() -> Bool {
+        guard let base = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else { return false }
+        let models = base
+            .appendingPathComponent("FluidAudio", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: models.path) else {
+            return false
+        }
+        return names.contains { $0.lowercased().contains("unified") }
     }
 
     static func loadSamples16kMono(url: URL) throws -> [Float] {

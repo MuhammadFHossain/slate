@@ -4,23 +4,20 @@ import Foundation
 /// How Right Option drives dictation.
 enum ActivationMode: String {
     case hold   // hold to talk, release to place the words
-    case tap    // tap to start, tap again to stop
+    case tap    // tap to start, tap again to place
+
+    /// Read fresh on every keypress, so a change in the menu takes effect at once.
+    static var current: ActivationMode {
+        ActivationMode(rawValue: UserDefaults.standard.string(forKey: Prefs.activationMode) ?? "") ?? .hold
+    }
 }
 
 /// Global hotkeys, active anywhere in macOS (needs Accessibility):
-///   hold Right Option  -> push-to-talk dictation (Wisprflow-style)
-///   Escape             -> cancel an in-progress dictation
+///   Right Option  -> push-to-talk dictation (hold, or tap to start and stop)
+///   Escape        -> cancel an in-progress dictation (what was said is kept
+///                    in History, so a stray Escape never loses anything)
 final class HotkeyManager {
     static let shared = HotkeyManager()
-
-    static let dictationEnabledKey = "dictationEnabled"
-    static let activationModeKey = "activationMode"
-
-    /// Read fresh on every keypress, so a change in the menu takes effect at once.
-    private var mode: ActivationMode {
-        ActivationMode(rawValue: UserDefaults.standard.string(forKey: Self.activationModeKey) ?? "")
-            ?? .hold
-    }
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -28,6 +25,24 @@ final class HotkeyManager {
     private var retryTimer: Timer?
 
     var isRunning: Bool { eventTap != nil }
+
+    static var hasAccessibility: Bool {
+        AXIsProcessTrusted()
+    }
+
+    /// True while any modifier key is physically down. The text inserter
+    /// waits on this: a ⌘V typed while Option is still held is ⌘⌥V.
+    static var physicalModifiersDown: Bool {
+        let flags = CGEventSource.flagsState(.combinedSessionState)
+        let modifiers: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
+        return !flags.intersection(modifiers).isEmpty
+    }
+
+    @discardableResult
+    static func promptForAccessibility() -> Bool {
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
 
     /// Starts the tap now if Accessibility is granted, and otherwise keeps
     /// retrying every few seconds so a grant made in System Settings takes
@@ -43,16 +58,6 @@ final class HotkeyManager {
                 self.retryTimer = nil
             }
         }
-    }
-
-    static var hasAccessibility: Bool {
-        AXIsProcessTrusted()
-    }
-
-    @discardableResult
-    static func promptForAccessibility() -> Bool {
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        return AXIsProcessTrustedWithOptions(options)
     }
 
     func startIfPossible() {
@@ -108,23 +113,24 @@ final class HotkeyManager {
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let defaults = UserDefaults.standard
 
         switch type {
         case .flagsChanged:
-            // Right Option is keycode 61; track its own press/release.
-            guard keyCode == 61,
-                  defaults.object(forKey: Self.dictationEnabledKey) == nil
-                    || defaults.bool(forKey: Self.dictationEnabledKey)
-            else { return }
+            // Right Option is keycode 61; track its own press and release.
+            guard keyCode == 61, Prefs.bool(Prefs.dictationEnabled) else { return }
             let optionHeld = event.flags.contains(.maskAlternate)
-            let mode = self.mode
+            let mode = ActivationMode.current
             if optionHeld, !rightOptionDown {
                 rightOptionDown = true
+                // Off the tap callback (a stalled tap gets disabled), in order:
+                // the main queue is FIFO, so a quick press-release can never
+                // run its release before its press.
                 DispatchQueue.main.async {
-                    switch mode {
-                    case .hold: DictationController.shared.beginHold()
-                    case .tap: DictationController.shared.toggle()
+                    MainActor.assumeIsolated {
+                        switch mode {
+                        case .hold: DictationController.shared.beginHold()
+                        case .tap: DictationController.shared.toggle()
+                        }
                     }
                 }
             } else if !optionHeld, rightOptionDown {
@@ -132,46 +138,22 @@ final class HotkeyManager {
                 // Hold mode places the words on release; tap mode ignores the
                 // release and waits for a second tap to stop.
                 if mode == .hold {
-                    DispatchQueue.main.async { DictationController.shared.endHold() }
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated { DictationController.shared.endHold() }
+                    }
                 }
             }
 
         case .keyDown:
             // Escape cancels an in-progress dictation.
             if keyCode == 53 {
-                DispatchQueue.main.async { DictationController.shared.cancel() }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { DictationController.shared.cancel() }
+                }
             }
 
         default:
             break
-        }
-    }
-}
-
-/// Types transcribed text into the frontmost app: preserves the pasteboard,
-/// pastes with a synthetic Cmd-V, then restores what was there. (Page 2 makes
-/// this clipboard-safe across all types and adds the keystroke fallback.)
-enum TextInserter {
-    static func insert(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        let saved = pasteboard.string(forType: .string)
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let vKey = CGKeyCode(9)
-        let down = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
-        down?.flags = .maskCommand
-        let up = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        up?.flags = .maskCommand
-        down?.post(tap: .cgSessionEventTap)
-        up?.post(tap: .cgSessionEventTap)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            pasteboard.clearContents()
-            if let saved {
-                pasteboard.setString(saved, forType: .string)
-            }
         }
     }
 }
