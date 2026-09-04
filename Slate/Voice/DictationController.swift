@@ -37,6 +37,9 @@ final class DictationController: ObservableObject {
 
     private let recorder = AudioRecorder()
     private var panel: FloatingPanel?
+    /// The island's last reported size, so a re-show lays out from what the
+    /// content actually measures rather than a default slot.
+    private var lastIslandSize = NSSize(width: 300, height: 90)
     private var startedAt: Date?
     private var liveTask: Task<Void, Never>?
     /// Bumped by every hide request and every start, so a stale hide from an
@@ -280,6 +283,7 @@ final class DictationController: ObservableObject {
     private func showIsland() {
         if panel == nil {
             let content = DictationIslandView(onResize: { [weak self] size in
+                self?.lastIslandSize = size
                 self?.panel?.layoutTopCenter(contentSize: size)
             })
             .environmentObject(self)
@@ -290,8 +294,9 @@ final class DictationController: ObservableObject {
                 anchored: true
             )
         }
-        // Reset to a compact top slot; the island grows itself as words arrive.
-        panel?.layoutTopCenter(contentSize: NSSize(width: 300, height: 90))
+        // Lay out from the last measured size; the island then grows itself
+        // as words arrive.
+        panel?.layoutTopCenter(contentSize: lastIslandSize)
         panel?.orderFrontRegardless()
     }
 

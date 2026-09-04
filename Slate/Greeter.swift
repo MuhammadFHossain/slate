@@ -28,6 +28,9 @@ final class LaunchGreeter: ObservableObject {
     @Published var detail = ""
 
     private var panel: FloatingPanel?
+    /// The card's last reported size. A re-show with unchanged text reports
+    /// no new size, so the panel must be laid out from this, not a default.
+    private var lastSize = NSSize(width: 380, height: 110)
     private var pollTask: Task<Void, Never>?
     private var dismissTask: Task<Void, Never>?
 
@@ -63,6 +66,7 @@ final class LaunchGreeter: ObservableObject {
         dismissTask?.cancel()
         if panel == nil {
             let view = WelcomeView(onResize: { [weak self] size in
+                self?.lastSize = size
                 self?.panel?.layoutTopCenter(contentSize: size)
             })
             .environmentObject(self)
@@ -72,7 +76,7 @@ final class LaunchGreeter: ObservableObject {
                 anchored: true
             )
         }
-        panel?.layoutTopCenter(contentSize: NSSize(width: 380, height: 110))
+        panel?.layoutTopCenter(contentSize: lastSize)
         panel?.orderFrontRegardless()
     }
 
