@@ -61,15 +61,20 @@ actor SpeechEngine {
     /// first inference on a cold CoreML model is the slow one; a second of
     /// near-silence is enough to get it out of the way.
     func warmUp() async {
+        let started = Date()
         do {
             try await ensureLoaded()
+            let loaded = Date()
             guard let manager else { return }
             var quiet = [Float](repeating: 0, count: 16_000)
             for index in quiet.indices where index % 97 == 0 {
                 quiet[index] = 0.0004
             }
             _ = try await manager.transcribe(quiet)
-            Log.write("speech engine warm")
+            Log.write(String(
+                format: "speech engine warm: load %.2fs, first inference %.2fs",
+                loaded.timeIntervalSince(started), Date().timeIntervalSince(loaded)
+            ))
         } catch {
             Log.write("speech warm-up failed: \(error)")
         }

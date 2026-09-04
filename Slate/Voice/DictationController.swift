@@ -124,6 +124,7 @@ final class DictationController: ObservableObject {
 
         Task { [weak self] in
             guard let self else { return }
+            let finalStarted = Date()
             var paragraphs = settled
             var failure: String?
             let ranges = autoParagraphs
@@ -138,6 +139,7 @@ final class DictationController: ObservableObject {
                     break
                 }
             }
+            let finalSeconds = Date().timeIntervalSince(finalStarted)
             let text = TextFormatter.compose(paragraphs: paragraphs, spaceAfter: spaceAfter)
             let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
@@ -158,7 +160,13 @@ final class DictationController: ObservableObject {
                 return
             }
 
+            let placeStarted = Date()
             let outcome = await TextInserter.insert(text)
+            Log.write(String(
+                format: "turn: %.1fs audio, %ld settled + %ld final segments, final pass %.2fs, placed in %.2fs, %ld chars",
+                Double(samples.count) / 16_000, settled.count, ranges.count,
+                finalSeconds, Date().timeIntervalSince(placeStarted), text.count
+            ))
             switch outcome {
             case .placed(let appName):
                 DictationHistory.shared.add(text, outcome: .placed, appName: appName)
