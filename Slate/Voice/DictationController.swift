@@ -242,7 +242,10 @@ final class DictationController: ObservableObject {
                     let segment = Array(samples[settledEnd..<cut])
                     let text = try? await SpeechEngine.shared.transcribe(segment)
                     guard !Task.isCancelled, phase == .listening, turn == myTurn else { return }
-                    if let text, !text.isEmpty {
+                    // A failed pass leaves the boundary where it was, so the
+                    // final pass covers this stretch instead of losing it.
+                    guard let text else { break }
+                    if !text.isEmpty {
                         settledRaw.append(text)
                     }
                     settledEnd = cut

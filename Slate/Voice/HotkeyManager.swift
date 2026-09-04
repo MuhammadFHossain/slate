@@ -117,9 +117,22 @@ final class HotkeyManager {
         switch type {
         case .flagsChanged:
             // Right Option is keycode 61; track its own press and release.
-            guard keyCode == 61, Prefs.bool(Prefs.dictationEnabled) else { return }
-            let optionHeld = event.flags.contains(.maskAlternate)
+            guard keyCode == 61 else { return }
+            // The generic Option flag is set for either Option key, so a Right
+            // Option release while Left Option is held would read as still
+            // down. The device-specific bits tell them apart; fall back to the
+            // generic flag only when a virtual keyboard sets neither.
+            let raw = event.flags.rawValue
+            let rightOptionBit: UInt64 = 0x40
+            let leftOptionBit: UInt64 = 0x20
+            let optionHeld: Bool
+            if (raw & (rightOptionBit | leftOptionBit)) != 0 {
+                optionHeld = (raw & rightOptionBit) != 0
+            } else {
+                optionHeld = event.flags.contains(.maskAlternate)
+            }
             let mode = ActivationMode.current
+            let enabled = Prefs.bool(Prefs.dictationEnabled)
             if optionHeld, !rightOptionDown {
                 rightOptionDown = true
                 // Off the tap callback (a stalled tap gets disabled), in order:
@@ -127,9 +140,13 @@ final class HotkeyManager {
                 // run its release before its press.
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
+                        let controller = DictationController.shared
+                        // Disabled only stops new turns; a turn already
+                        // running can always be finished.
+                        guard enabled || controller.isBusy else { return }
                         switch mode {
-                        case .hold: DictationController.shared.beginHold()
-                        case .tap: DictationController.shared.toggle()
+                        case .hold: controller.beginHold()
+                        case .tap: controller.toggle()
                         }
                     }
                 }
