@@ -92,11 +92,14 @@ enum PauseSegmenter {
 
     /// Adaptive speech gate: well above the room tone, a fraction of the loud
     /// frames, and never below a hard floor so a silent buffer has no speech.
+    /// The room-tone term is capped against the loud frames, so a window that
+    /// is mostly continuous speech (the live tail) does not put the gate
+    /// above its own quieter words.
     private static func speechThreshold(_ rms: [Float]) -> Float {
         let sorted = rms.sorted()
         guard !sorted.isEmpty else { return 1 }
-        let floor = sorted[sorted.count / 5]
+        let floor = sorted[sorted.count / 10]
         let loud = sorted[min(sorted.count - 1, (sorted.count * 95) / 100)]
-        return max(floor * 3, loud * 0.10, 0.0015)
+        return max(min(floor * 3, loud * 0.3), loud * 0.10, 0.0015)
     }
 }

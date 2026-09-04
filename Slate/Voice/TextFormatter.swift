@@ -130,6 +130,14 @@ enum TextFormatter {
             for length in stride(from: min(3, tokens.count - index), through: 1, by: -1) {
                 let phrase = tokens[index..<(index + length)].map(core).joined(separator: " ")
                 guard let command = commands[phrase] else { continue }
+                // "It was close. Quote me on that" is not "close quote": a
+                // mark inside the phrase means these were separate words.
+                if length > 1 {
+                    let brokenInside = tokens[index..<(index + length - 1)].contains { token in
+                        token.last.map { ".,;:!?".contains($0) } ?? false
+                    }
+                    if brokenInside { continue }
+                }
                 switch command {
                 case .punct(let mark): pieces.append(.punct(mark))
                 case .open(let mark): pieces.append(.open(mark))
@@ -260,7 +268,7 @@ enum TextFormatter {
 
     /// Abbreviations whose period does not end a sentence.
     private static let abbreviations: Set<String> = [
-        "e.g", "i.e", "etc", "vs", "dr", "mr", "mrs", "ms", "st", "no", "approx", "dept", "inc", "jr", "sr",
+        "e.g", "i.e", "etc", "vs", "dr", "mr", "mrs", "ms", "st", "approx", "dept", "inc", "jr", "sr",
     ]
 
     /// Spacing, standalone "i", and sentence capitalization over the whole text.
@@ -279,7 +287,13 @@ enum TextFormatter {
         // A space after a sentence end when the next sentence follows unspaced.
         s = s.replacingOccurrences(of: "(?<=[a-z])([.!?])(?=[A-Z])", with: "$1 ", options: .regularExpression)
         // The pronoun.
-        s = s.replacingOccurrences(of: "(?<![\\w'’-])i(?=[\\s'’,;:!?]|$)", with: "I", options: .regularExpression)
+        s = s.replacingOccurrences(
+            of: "(?<![\\w'’-])i(?=[\\s'’,;:!?…)\\]\"]|\\.(?![A-Za-z])|$)",
+            with: "I", options: .regularExpression
+        )
+        // A list marker with nothing after it (a scratched item, or a trailing
+        // "bullet point") is not a line.
+        s = s.replacingOccurrences(of: "(?m)^(?:-|\\d+\\.) ?$\\n?", with: "", options: .regularExpression)
         s = capitalizeSentences(s)
         // No trailing spaces on lines.
         s = s.replacingOccurrences(of: "[ \\t]+\\n", with: "\n", options: .regularExpression)
