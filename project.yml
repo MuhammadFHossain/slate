@@ -6,7 +6,9 @@ options:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio
-    from: 0.12.4
+    # UnifiedAsrManager (the Parakeet Unified offline path Slate uses) first
+    # shipped in v0.15.3; anything older does not build.
+    from: 0.15.3
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -33,8 +35,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.slate.dictation
         PRODUCT_NAME: Slate
-        MARKETING_VERSION: 0.1.0
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 2.0
+        CURRENT_PROJECT_VERSION: 2
         INFOPLIST_FILE: Slate/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -49,6 +51,15 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Slate/Slate.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
+      configs:
+        # A debug build keeps the Apple Development signature, so it can never
+        # match the shipped app's rule (Developer ID). Giving it the same
+        # bundle identifier would make the two fight over ONE Accessibility
+        # row in Privacy & Security. Its own identifier and name keep a debug
+        # run from ever costing the real app anything. Same rule as main.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.slate.dictation.debug
+          PRODUCT_NAME: Slate Debug
 # Run WITHOUT the debugger attached: macOS 26 has a libxpc launch-init race that
 # aborts the process before main() under LLDB (an Apple system-library bug, not
 # ours). Launching via open / posix_spawn is reliable. Same workaround Blue uses.
