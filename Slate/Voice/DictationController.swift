@@ -66,41 +66,65 @@ final class DictationController: ObservableObject {
 
     // MARK: - Turns
 
+    /// How long the mic stays armed after a turn. A dictation that follows
+    /// within this window starts instantly and clip-free; after it, the
+    /// release clears the in-use dot and, on Bluetooth headphones, hands back
+    /// the music-quality profile.
+    static let warmMicSeconds: TimeInterval = 90
+
     func beginHold() {
-        Log.write("beginHold phase=\(phase)")
+        let hop = HotkeyManager.lastPressAt.map { Date().timeIntervalSince($0) * 1000 } ?? 0
+        Log.write(String(format: "beginHold phase=%@, %.0fms after keypress", String(describing: phase), hop))
         guard !isBusy else { return }
         hideGeneration += 1
         turn += 1
+        let myTurn = turn
         targetApp = NSWorkspace.shared.frontmostApplication?.localizedName
         settledRaw = []
         settledEnd = 0
         tailRaw = ""
         liveText = ""
         level = 0
-        do {
-            recorder.onLevel = { [weak self] level in
-                self?.level = level
+        startedAt = Date()
+        recorder.onLevel = { [weak self] level in
+            self?.level = level
+        }
+        // The island first, on this runloop pass, so the feedback is instant
+        // even when the mic takes a beat to open (Bluetooth can take half a
+        // second). The capture itself starts on the very next pass, so the
+        // engine start never holds up the paint.
+        phase = .listening
+        showIsland()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.turn == myTurn, self.phase == .listening else { return }
+            let armStarted = Date()
+            let wasArmed = self.recorder.isArmed
+            do {
+                // Armed and hot from a recent hold: instant, seeded with the
+                // pre-roll just before the keypress. Cold: warms the engine now.
+                try self.recorder.beginCapture()
+                Log.write(String(
+                    format: "mic %@ in %.0fms, device=%@",
+                    wasArmed ? "hot" : "cold start",
+                    Date().timeIntervalSince(armStarted) * 1000,
+                    self.recorder.boundInputName
+                ))
+                // The cue means "recording now", so it waits for the capture.
+                SoundCue.play(.start)
+                // Hush any playing music so the mic hears you, not the speakers.
+                // After the island is up, so media control can never block dictation.
+                if Prefs.bool(Prefs.pauseMedia) {
+                    MediaController.shared.pauseIfPlaying()
+                }
+                self.liveTask = Task { [weak self] in
+                    await self?.runLivePass()
+                }
+            } catch {
+                MediaController.shared.resume()
+                self.phase = .error(error.localizedDescription)
+                SoundCue.play(.error)
+                self.scheduleHide(after: 2.5)
             }
-            // The mic is armed and hot from a recent hold, so capture starts
-            // instant and clip-free, seeded with the pre-roll just before this
-            // keypress. The first hold after idle warms the engine here once.
-            try recorder.beginCapture()
-            startedAt = Date()
-            phase = .listening
-            showIsland()
-            // Hush any playing music so the mic hears you, not the speakers.
-            // After the island is up, so media control can never block dictation.
-            if Prefs.bool(Prefs.pauseMedia) {
-                MediaController.shared.pauseIfPlaying()
-            }
-            liveTask = Task { [weak self] in
-                await self?.runLivePass()
-            }
-        } catch {
-            MediaController.shared.resume()
-            phase = .error(error.localizedDescription)
-            showIsland()
-            scheduleHide(after: 2.5)
         }
     }
 
@@ -110,10 +134,10 @@ final class DictationController: ObservableObject {
         liveTask = nil
         // Your music comes back the moment you stop talking.
         MediaController.shared.resume()
-        // Stop the mic the instant you let go, so the orange in-use dot clears
-        // right away. No warm-mic idle window; the next hold re-arms fresh.
-        let samples = recorder.endCapture()
-        recorder.release()
+        // The mic stays armed for a short idle window, so a dictation that
+        // follows within seconds starts instantly; the release after it
+        // clears the in-use dot.
+        let samples = recorder.endCapture(idleAfter: Self.warmMicSeconds)
         // A tap shorter than a third of a second is a mis-press, not speech.
         guard Date().timeIntervalSince(startedAt ?? Date()) > 0.3 else {
             phase = .idle
@@ -158,6 +182,7 @@ final class DictationController: ObservableObject {
             }
             if let failure, !hasText {
                 self.phase = .error(failure)
+                SoundCue.play(.error)
                 self.scheduleHide(after: 2.5)
                 return
             }
@@ -179,11 +204,13 @@ final class DictationController: ObservableObject {
                 DictationHistory.shared.add(text, outcome: .placed, appName: appName)
                 guard self.turn == myTurn else { return }
                 self.phase = .placed(appName)
+                SoundCue.play(.placed)
                 self.scheduleHide(after: 1.2)
             case .copied:
                 DictationHistory.shared.add(text, outcome: .copied, appName: app)
                 guard self.turn == myTurn else { return }
                 self.phase = .copied
+                SoundCue.play(.copied)
                 self.scheduleHide(after: 3.2)
             }
         }
@@ -197,8 +224,7 @@ final class DictationController: ObservableObject {
         liveTask?.cancel()
         liveTask = nil
         MediaController.shared.resume()
-        let samples = recorder.endCapture()
-        recorder.release()
+        let samples = recorder.endCapture(idleAfter: Self.warmMicSeconds)
 
         let settled = settledRaw
         let start = min(settledEnd, samples.count)
@@ -207,6 +233,7 @@ final class DictationController: ObservableObject {
 
         let worthKeeping = !settled.isEmpty || samples.count - start > 16_000
         phase = .cancelled(kept: worthKeeping)
+        SoundCue.play(.cancelled)
         scheduleHide(after: worthKeeping ? 1.5 : 0.7)
         guard worthKeeping else { return }
 

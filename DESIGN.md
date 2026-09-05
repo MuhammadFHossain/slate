@@ -71,12 +71,13 @@ screens without a notch.
 
 **Size.** The body is never narrower than the notch. Padding 18 pt each side,
 notch height + 8 pt on top, 14 pt on the bottom. The transcript column is
-400 pt wide; the island widens to fit it. Outside the shape, 28 pt of room
-each side and 30 pt below for the shadow.
+400 pt wide; the island widens to fit it. The window hugs the shape: 1 pt of
+slack each side and below, no room reserved for a shadow.
 
 **Fill and edge.** Solid black. A 1 pt hairline that is invisible at the top,
-white at 10 % down the sides, and emerald at 45 % along the bottom. Shadow:
-black 45 %, blur 18, offset 10 down. Glow: emerald 28 %, blur 26, offset 4.
+white at 10 % down the sides, and emerald at 45 % along the bottom. No cast
+shadow or glow: pinned to the top of the screen, a full-shape shadow banded
+down both straight sides over whatever was behind it.
 
 **Header row** (10 pt gaps): waveform, then either the live dot and a label or
 nothing, then the hints.

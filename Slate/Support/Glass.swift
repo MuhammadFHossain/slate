@@ -233,22 +233,63 @@ struct GlassSurface: ViewModifier {
     }
 }
 
-extension View {
-    /// A free-standing glass card with all corners rounded.
-    func glassCard(radius: CGFloat = 18, material: NSVisualEffectView.Material = .popover) -> some View {
-        modifier(GlassSurface(radius: radius, roundTop: true, material: material))
+/// Apple's Liquid Glass (macOS 26+) as a plain background view, with the
+/// system blur as the fallback on older systems. Used for the History window's
+/// whole surface, where a shaped SwiftUI `glassEffect` is awkward.
+struct LiquidGlassView: NSViewRepresentable {
+    var cornerRadius: CGFloat = 0
+    var tint: NSColor? = nil
+    var fallbackMaterial: NSVisualEffectView.Material = .sidebar
+
+    func makeNSView(context: Context) -> NSView {
+        if #available(macOS 26, *) {
+            let view = NSGlassEffectView()
+            view.cornerRadius = cornerRadius
+            view.tintColor = tint
+            return view
+        }
+        let view = NSVisualEffectView()
+        view.state = .active
+        view.material = fallbackMaterial
+        view.blendingMode = .behindWindow
+        return view
     }
 
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if #available(macOS 26, *), let view = nsView as? NSGlassEffectView {
+            view.cornerRadius = cornerRadius
+            view.tintColor = tint
+        }
+    }
+}
+
+extension View {
+    /// A free-standing glass card. On macOS 26 this is Apple's Liquid Glass —
+    /// the real shining, translucent material, which draws its own edge,
+    /// refraction and shadow — with a faint emerald tint for brand. Older
+    /// systems fall back to the hand-built frosted surface.
+    @ViewBuilder
+    func glassCard(radius: CGFloat = 18, material: NSVisualEffectView.Material = .popover) -> some View {
+        if #available(macOS 26, *) {
+            glassEffect(
+                .regular.tint(Brand.emerald.opacity(0.05)),
+                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+            )
+        } else {
+            modifier(GlassSurface(radius: radius, roundTop: true, material: material))
+        }
+    }
 }
 
 // MARK: - Island surface
 
 /// The island's surface: the notch, grown. Deep black, exactly like the
 /// notch it comes out of, with concave flares into the menu bar at the top
-/// corners, round bottom corners, a hairline of emerald along the bottom
-/// edge, and a soft green glow underneath. On a screen without a notch,
-/// `fillet` and `capHeight` are zero and it hangs from the menu bar with
-/// square top corners.
+/// corners, round bottom corners, and a hairline of emerald along the bottom
+/// edge. No cast shadow or glow: pinned to the top of the screen, a full-shape
+/// shadow banded down both straight sides over whatever was behind it. On a
+/// screen without a notch, `fillet` and `capHeight` are zero and it hangs from
+/// the menu bar with square top corners.
 struct NotchSurface: ViewModifier {
     var fillet: CGFloat
     var bottomRadius: CGFloat
@@ -280,28 +321,18 @@ struct NotchSurface: ViewModifier {
                     )
                     .clipShape(shape)
             )
-            .background(
-                shape
-                    .fill(Color.black.opacity(0.45))
-                    .blur(radius: 18)
-                    .offset(y: 10)
-            )
-            .background(
-                shape
-                    .fill(Brand.emerald.opacity(0.28))
-                    .blur(radius: 26)
-                    .offset(y: 4)
-            )
     }
 }
 
 extension View {
-    /// The island surface, with room around it for the shadow.
+    /// The island surface. No cast shadow or glow, so nothing bands down the
+    /// sides over whatever is behind it; just enough room around the body for
+    /// the top flares and the hairline stroke.
     func islandSurface(fillet: CGFloat, bottomRadius: CGFloat, capHeight: CGFloat) -> some View {
         self
             .modifier(NotchSurface(fillet: fillet, bottomRadius: bottomRadius, capHeight: capHeight))
-            .padding(.horizontal, 28)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 1)
+            .padding(.bottom, 1)
             .fixedSize()
     }
 }

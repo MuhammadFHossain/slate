@@ -18,9 +18,11 @@ enum TextFormatter {
         var numbered = 0
         var pieces: [String] = []
         for raw in paragraphs {
-            let rendered = render(parse(raw, numbered: &numbered))
+            let rendered = render(parse(Self.stripFillers(raw), numbered: &numbered))
             let trimmed = tidy(rendered)
-            guard !trimmed.isEmpty else { continue }
+            // Empty, or only punctuation a stripped filler left behind (a bare
+            // "Uh." becomes "."): nothing worth placing.
+            guard trimmed.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
             if final {
                 // A spoken "new paragraph" makes paragraphs inside one stretch;
                 // each of them gets its ending.
@@ -35,6 +37,72 @@ enum TextFormatter {
             text += " "
         }
         return text
+    }
+
+    // MARK: - Fillers
+
+    /// Hesitation sounds, never vocabulary: um/uh/erm and friends, in any run
+    /// length ASR spells them (um, umm, ummm…). Words people lean on ("like",
+    /// "you know") are left alone — cutting those changes meaning. No English
+    /// word is a pure um/uh/ah/hm run; "mm" (millimetres), "mhm"/"uh-huh"
+    /// (yes), "huh", and "ums"/"uhs" (words about fillers) are kept.
+    private static let fillerRuns = "u+m+|u+h+m*|a+h+|h+m+|m{3,}"
+
+    /// Remove hesitation fillers and close the seam they leave. Runs before the
+    /// command parse, so "um, scratch that" still reads as a bare command and
+    /// "the, um, new products" keeps the determiner the break rules look for.
+    static func stripFillers(_ text: String) -> String {
+        var out = stripFillerPattern(
+            "(?i)(?:,\\s*)?(?<![\\p{L}\\p{N}'\u{2019}@._\\-\"\u{201C}\u{201D}])(?:\(fillerRuns))(?![\\p{L}\\p{N}'\u{2019}@_\\-\"\u{201C}\u{201D}]|\\.[\\p{L}\\p{N}])(?:\\s*,)?\\s*",
+            in: text
+        )
+        // er/erm/err, case-sensitive and guarded: "To err is human", "err on
+        // the side of", and the uppercase ER stay words.
+        out = stripFillerPattern(
+            "(?:,\\s*)?(?<![\\p{L}\\p{N}'\u{2019}@._\\-\"\u{201C}\u{201D}])(?<![Tt]o )e+r+m*(?! on\\b)(?![\\p{L}\\p{N}'\u{2019}@_\\-\"\u{201C}\u{201D}]|\\.[\\p{L}\\p{N}])(?:\\s*,)?\\s*",
+            in: out
+        )
+        // Sentence-initial "Er," / "Erm," is hesitation wearing the model's
+        // capital; capitalized forms elsewhere stay words.
+        out = stripFillerPattern(
+            "(?:^|(?<=[.!?]\\s))E+r+m*(?! on\\b)(?![\\p{L}\\p{N}'\u{2019}@_\\-\"\u{201C}\u{201D}]|\\.[\\p{L}\\p{N}])(?:\\s*,)?\\s*",
+            in: out
+        )
+        return out
+    }
+
+    private static func stripFillerPattern(_ pattern: String, in text: String) -> String {
+        guard let regex = compiled(pattern) else { return text }
+        let ns = text as NSString
+        var out = ""
+        var cursor = 0
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let matched = ns.substring(with: match.range)
+            out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            // Keep ONE comma if the filler had one on each side; else drop it
+            // whole. Never pad a space onto one already there.
+            let leadingComma = matched.hasPrefix(",")
+            let trailingComma = matched.dropFirst().contains(",")
+            if leadingComma && trailingComma {
+                out += ", "
+            } else if !out.isEmpty, let last = out.last, !last.isWhitespace {
+                out += " "
+            }
+            cursor = match.range.location + match.range.length
+        }
+        out += ns.substring(from: cursor)
+        return out
+    }
+
+    private static var regexCache: [String: NSRegularExpression] = [:]
+    private static let regexCacheLock = NSLock()
+    private static func compiled(_ pattern: String) -> NSRegularExpression? {
+        regexCacheLock.lock()
+        defer { regexCacheLock.unlock() }
+        if let cached = regexCache[pattern] { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        regexCache[pattern] = regex
+        return regex
     }
 
     // MARK: - Spoken commands

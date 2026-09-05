@@ -15,12 +15,27 @@ enum Prefs {
     static let autoParagraphs = "paragraphsOnPauses"
     /// Master switch for the talk key.
     static let dictationEnabled = "dictationEnabled"
+    /// Confirmation sounds on or off (kept for older settings).
+    static let soundCues = "soundCues"
+    /// Which set of sounds: classic, soft, marimba, click, or off.
+    static let soundStyle = "soundStyle"
+    /// Capture from the Mac's own microphone even when headphones are the
+    /// system input: it opens in a tenth of the time Bluetooth takes, never
+    /// drops AirPods into call-quality mode, and hears speech better.
+    static let preferBuiltInMic = "preferBuiltInMic"
+    /// When the cursor follows text on its line, start the words on a new
+    /// paragraph instead of running them into it.
+    static let paragraphAfterText = "newParagraphAfterText"
 
     static let defaults: [String: Any] = [
         spaceAfter: true,
         pauseMedia: true,
         autoParagraphs: true,
         dictationEnabled: true,
+        soundCues: true,
+        soundStyle: "classic",
+        preferBuiltInMic: true,
+        paragraphAfterText: true,
     ]
 
     /// Register the defaults once at launch so an unset key reads as its

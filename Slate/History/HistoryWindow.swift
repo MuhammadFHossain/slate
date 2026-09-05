@@ -77,7 +77,7 @@ struct HistoryView: View {
         }
         .frame(minWidth: 440, minHeight: 380)
         .background(
-            VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
+            LiquidGlassView(fallbackMaterial: .sidebar)
                 .ignoresSafeArea()
         )
         .alert("Clear history?", isPresented: $confirmClear) {

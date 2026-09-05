@@ -20,6 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Prefs.register()
         Log.write("launch; accessibility=\(HotkeyManager.hasAccessibility)")
+        // Pre-load the sounds and find the Mac's microphone now, so the first
+        // hold pays for neither (the device lookup alone is ~150 ms cold).
+        SoundCue.warmUp()
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = AudioRecorder.builtInInputDevice()
+        }
         // Push-to-talk needs Accessibility; retry quietly until it's granted so
         // a grant made in System Settings takes effect without a relaunch.
         HotkeyManager.shared.ensureRunning()
@@ -48,6 +54,9 @@ struct SlateMenu: View {
     @AppStorage(Prefs.spaceAfter) private var spaceAfter = true
     @AppStorage(Prefs.autoParagraphs) private var autoParagraphs = true
     @AppStorage(Prefs.pauseMedia) private var pauseMedia = true
+    @AppStorage(Prefs.soundStyle) private var soundStyle = SoundCue.Style.classic.rawValue
+    @AppStorage(Prefs.preferBuiltInMic) private var preferBuiltInMic = true
+    @AppStorage(Prefs.paragraphAfterText) private var paragraphAfterText = true
     @EnvironmentObject private var history: DictationHistory
     @EnvironmentObject private var speech: SpeechStatus
 
@@ -99,13 +108,21 @@ struct SlateMenu: View {
         }
         Button("History…") { HistoryWindowController.shared.show() }
             .keyboardShortcut("h")
+        Button("Paste something recent  (⌘ + Right Option)") { QuickPicker.shared.toggle() }
 
         Divider()
 
         Menu("Settings") {
             Toggle("Space after each dictation", isOn: $spaceAfter)
             Toggle("New paragraph when you pause", isOn: $autoParagraphs)
+            Toggle("New paragraph when the cursor follows text", isOn: $paragraphAfterText)
             Toggle("Pause music while talking", isOn: $pauseMedia)
+            Toggle("Use the Mac's microphone (faster than AirPods)", isOn: $preferBuiltInMic)
+            Picker("Sound", selection: $soundStyle) {
+                ForEach(SoundCue.Style.allCases, id: \.rawValue) { style in
+                    Text(style.label).tag(style.rawValue)
+                }
+            }
             Divider()
             Toggle("Launch at login", isOn: Binding(
                 get: { LoginItem.isEnabled },
